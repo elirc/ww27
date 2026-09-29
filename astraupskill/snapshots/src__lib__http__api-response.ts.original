@@ -1,0 +1,40 @@
+/*
+ * What this file does:
+ * Normalizes JSON responses and attaches version/deprecation headers to every route result.
+ * What calls it:
+ * Route handlers in src/app/api/platform/**/route.ts.
+ * What it calls:
+ * next/server and src/types/domain.ts metadata.
+ * One thing a junior engineer would likely get wrong:
+ * Returning deprecation info in the body only, which breaks client observability and gateway logging.
+ */
+
+import { NextResponse } from "next/server";
+
+import type { VersionDefinition } from "@/types/domain";
+
+export function jsonWithVersionHeaders<T>(
+  payload: T,
+  init: ResponseInit,
+  version: VersionDefinition
+): NextResponse<T> {
+  const response = NextResponse.json(payload, init);
+
+  // ⚠️ SENIOR NOTE: Response headers are how gateways and clients observe deprecation status without parsing response bodies.
+  response.headers.set("x-api-version", version.id);
+  response.headers.set("x-api-lifecycle", version.lifecycle);
+
+  if (version.lifecycle === "DEPRECATED") {
+    response.headers.set("Deprecation", "true");
+    response.headers.set(
+      "Warning",
+      `299 - "${version.id} is deprecated and will sunset on ${version.sunsetDate ?? "TBD"}"`
+    );
+  }
+
+  if (version.sunsetDate) {
+    response.headers.set("Sunset", version.sunsetDate);
+  }
+
+  return response;
+}

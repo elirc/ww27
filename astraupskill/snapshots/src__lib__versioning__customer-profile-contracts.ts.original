@@ -1,0 +1,163 @@
+/*
+ * What this file does:
+ * Transforms version-specific request/response payloads to and from the canonical customer profile model.
+ * What calls it:
+ * src/app/api/platform/customer-profiles/route.ts and src/app/api/platform/customer-profiles/[profileId]/route.ts.
+ * What it calls:
+ * src/types/domain.ts for canonical model types.
+ * One thing a junior engineer would likely get wrong:
+ * Letting version-specific fields leak into service-layer types until the business logic depends on the API contract.
+ */
+
+import type {
+  ApiVersionId,
+  CreateCustomerProfileInput,
+  CustomerProfileRecord,
+  ProfileLifecycleState,
+  UpdateCustomerProfileInput
+} from "@/types/domain";
+
+export interface CustomerProfileV1Response {
+  id: string;
+  externalReference: string;
+  fullName: string;
+  email: string;
+  status: "active" | "inactive";
+  createdAt: string;
+}
+
+export interface CustomerProfileV2Response {
+  id: string;
+  externalReference: string;
+  name: {
+    givenName: string;
+    familyName: string;
+  };
+  email: string;
+  lifecycleState: ProfileLifecycleState;
+  marketingOptIn: boolean;
+  createdAt: string;
+}
+
+type CreateV1Input = {
+  externalReference: string;
+  fullName: string;
+  email: string;
+  status: "active" | "inactive";
+};
+
+type UpdateV1Input = Partial<CreateV1Input>;
+
+type CreateV2Input = {
+  externalReference: string;
+  name: {
+    givenName: string;
+    familyName: string;
+  };
+  email: string;
+  lifecycleState: ProfileLifecycleState;
+  marketingOptIn: boolean;
+};
+
+type UpdateV2Input = Partial<CreateV2Input>;
+
+function splitFullName(fullName: string): { givenName: string; familyName: string } {
+  const [givenName, ...rest] = fullName.trim().split(/\s+/);
+
+  return {
+    givenName,
+    familyName: rest.join(" ") || "Unknown"
+  };
+}
+
+function toLegacyStatus(state: ProfileLifecycleState): "active" | "inactive" {
+  return state === "ACTIVE" || state === "TRIAL" ? "active" : "inactive";
+}
+
+function fromLegacyStatus(status: "active" | "inactive"): ProfileLifecycleState {
+  return status === "active" ? "ACTIVE" : "SUSPENDED";
+}
+
+export function toCanonicalCreateInput(
+  version: ApiVersionId,
+  payload: CreateV1Input | CreateV2Input,
+  ownerUserId: string
+): CreateCustomerProfileInput {
+  if (version === "v1") {
+    const migrated = splitFullName(payload.fullName);
+
+    // ⚠️ SENIOR NOTE: This migration is intentionally lossy; v1 cannot represent marketing preferences or the full lifecycle state machine.
+    return {
+      ownerUserId,
+      externalReference: payload.externalReference,
+      givenName: migrated.givenName,
+      familyName: migrated.familyName,
+      email: payload.email,
+      lifecycleState: fromLegacyStatus(payload.status),
+      marketingOptIn: false
+    };
+  }
+
+  return {
+    ownerUserId,
+    externalReference: payload.externalReference,
+    givenName: payload.name.givenName,
+    familyName: payload.name.familyName,
+    email: payload.email,
+    lifecycleState: payload.lifecycleState,
+    marketingOptIn: payload.marketingOptIn
+  };
+}
+
+export function toCanonicalUpdateInput(
+  version: ApiVersionId,
+  payload: UpdateV1Input | UpdateV2Input
+): UpdateCustomerProfileInput {
+  if (version === "v1") {
+    const migrated = payload.fullName ? splitFullName(payload.fullName) : undefined;
+
+    return {
+      givenName: migrated?.givenName,
+      familyName: migrated?.familyName,
+      email: payload.email,
+      lifecycleState: payload.status ? fromLegacyStatus(payload.status) : undefined
+    };
+  }
+
+  return {
+    givenName: payload.name?.givenName,
+    familyName: payload.name?.familyName,
+    email: payload.email,
+    lifecycleState: payload.lifecycleState,
+    marketingOptIn: payload.marketingOptIn
+  };
+}
+
+export function toVersionedCustomerProfile(
+  version: ApiVersionId,
+  profile: CustomerProfileRecord
+): CustomerProfileV1Response | CustomerProfileV2Response {
+  if (version === "v1") {
+    return {
+      id: profile.id,
+      externalReference: profile.externalReference,
+      fullName: `${profile.givenName} ${profile.familyName}`.trim(),
+      email: profile.email,
+      status: toLegacyStatus(profile.lifecycleState),
+      createdAt: profile.createdAt.toISOString()
+    };
+  }
+
+  return {
+    id: profile.id,
+    externalReference: profile.externalReference,
+    name: {
+      givenName: profile.givenName,
+      familyName: profile.familyName
+    },
+    email: profile.email,
+    lifecycleState: profile.lifecycleState,
+    marketingOptIn: profile.marketingOptIn,
+    createdAt: profile.createdAt.toISOString()
+  };
+}

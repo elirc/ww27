@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  SUPPORT
+  ANALYST
+  CLIENT
+}
+
+enum VersionLifecycle {
+  CURRENT
+  DEPRECATED
+  BETA
+}
+
+enum ProfileLifecycleState {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+model User {
+  id              String            @id @default(cuid())
+  email           String            @unique
+  name            String
+  role            UserRole
+  clientId        String
+  ownedProfiles   CustomerProfile[] @relation("ProfileOwner")
+  authoredAudits  AuditLog[]        @relation("AuditActor")
+  usageLogs       ApiUsageLog[]     @relation("UsageActor")
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+}
+
+model ApiVersion {
+  id                String         @id
+  lifecycle         VersionLifecycle
+  isDefault         Boolean        @default(false)
+  deprecationDate   DateTime?
+  sunsetDate        DateTime?
+  rolloutPercentage Int            @default(100)
+  allowlistJson     Json?
+  docsPath          String
+  usageLogs         ApiUsageLog[]
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+}
+
+model CustomerProfile {
+  id                 String               @id @default(cuid())
+  ownerUserId        String
+  externalReference  String               @unique
+  givenName          String
+  familyName         String
+  email              String               @unique
+  lifecycleState     ProfileLifecycleState
+  marketingOptIn     Boolean              @default(false)
+  owner              User                 @relation("ProfileOwner", fields: [ownerUserId], references: [id])
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+}
+
+model ApiUsageLog {
+  id               String      @id @default(cuid())
+  versionId        String
+  actorUserId      String?
+  route            String
+  method           String
+  statusCode       Int
+  deprecationFired Boolean     @default(false)
+  version          ApiVersion  @relation(fields: [versionId], references: [id])
+  actor            User?       @relation("UsageActor", fields: [actorUserId], references: [id])
+  createdAt        DateTime    @default(now())
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String
+  action      String
+  entityType  String
+  entityId    String
+  metadata    Json
+  actor       User     @relation("AuditActor", fields: [actorUserId], references: [id])
+  createdAt   DateTime @default(now())
+}

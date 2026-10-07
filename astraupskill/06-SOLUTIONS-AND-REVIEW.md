@@ -48,3 +48,17 @@ The adapter is the right place to translate names and statuses because the servi
 Review the changed-fields array against the input object, not the full profile. Object.keys on a padded object is evidence of a compatibility bug. Review false values explicitly. Review unknown versions at runtime even if the function parameter is typed as `ApiVersionId`, because route params and JSON are untrusted strings. For rollout, reject before writes and retain the admin-only guard.
 
 A remaining limitation is sequential profile and audit persistence: fake repositories demonstrate call ordering, not cross-connection atomicity. Document that honestly and require a transaction-capable repository before claiming stronger guarantees.
+
+## Senior review: findings beyond the PATCH path
+
+These were found by reading this clone. None was reproduced by a test.
+
+| # | Severity | Location | Finding |
+|---|---|---|---|
+| 1 | High (demo) | `src/lib/auth/session.ts:19-38` | Identity, role, and `clientId` all come from request headers. Any caller can claim `ADMIN`, which makes every authorization rule in the services advisory until a signed session replaces this adapter. |
+| 2 | Medium | `src/app/api/platform/customer-profiles/route.ts:57-69` (and the same pattern in the `[profileId]` route) | An unknown `x-api-version` throws `badRequest` in `buildApiContext`. The `catch` block then calls `getRequestedVersion(request)` again, which throws outside the `try`, so the caller sees a framework 500 instead of 400. |
+| 3 | Medium | `customer-profiles/route.ts:99-104` | Usage recording is awaited on the success path. A metrics failure after a successful create or update returns an error to the client, and a retry may then duplicate the write. |
+| 4 | Medium | `src/lib/versioning/version-rollout.ts:15-17, 24-31` | Rollout bucketing sums character codes mod 100, and `clientId` is caller-chosen, so the rollout gate is trivially bypassable and poorly distributed. |
+| 5 | Low | `src/lib/versioning/customer-profile-contracts.ts:86-101` | v1 round-trips are lossy. Single-word names gain the family name "Unknown". `TRIAL` reads as `active`, and writing `active` back turns it into `ACTIVE`. |
+| 6 | Low | `src/lib/http/api-response.ts:36-38` | `Sunset` is a bare date rather than an HTTP-date. `deprecationDate` from the registry is never emitted. |
+| 7 | Low | `src/lib/versioning/version-registry.ts:15-19` | The default version is the deprecated one, so clients that send no version keep landing on v1 until the default is switched. |
